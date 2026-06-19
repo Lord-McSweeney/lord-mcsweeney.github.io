@@ -60,7 +60,7 @@
             let INTERVAL = inputElement.value * 24 * 60 * 60 * 1000;
             let RENDER_X_MULT = inputElement.value;
             let RENDER_X_OFFS = 0;
-            let RENDER_Y_MULT = parseFloat(localStorage.issueScrollRenderYMult) ?? 0.3;
+            let RENDER_Y_MULT = (localStorage.issueScrollRenderYMult === undefined || localStorage.issueScrollRenderYMult === "NaN") ? 0.3 : parseFloat(localStorage.issueScrollRenderYMult);
 
             let SELECTED_COLUMN = -1;
 
