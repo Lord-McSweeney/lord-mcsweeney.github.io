@@ -2,17 +2,69 @@
 <html>
     <head>
         <meta charset="utf-8">
+        <style>
+            #canvas {
+                width: 100%;
+                border-left: 1px solid black;
+            }
+            #container {
+                display: grid;
+                grid-template-columns: 25% 75%;
+                grid-template-rows: 80% 20%;
+                border: 1px solid black;
+                margin: 8px;
+            }
+            #selected-container {
+                border-top: 1px solid black;
+                width: 100%;
+                grid-column: 1 / -1;
+                padding: 4px;
+            }
+            #config-container {
+                margin: 4px;
+            }
+            .labelled-input {
+                display: flex;
+                align-items: center;
+                column-gap: 6px;
+            }
+        </style>
     </head>
     <body style="margin: 0px;">
-        <canvas id="canvas" width="1600" height="800" style="margin: 8px; border: 1px solid black;"> </canvas>
+        <div id="container">
+            <div id="config-container">
+                <div class="labelled-input">
+                    <label for="interval"> Interval (days) </label>
+                    <input type="number" id="interval-input" name="interval" min="1" max="120" value="120">
+                </div>
+                <p id="info">
+                    Zoom with mouse wheel <br>
+                    Drag mouse horizontally to pan <br>
+                    Note: visualization may take a few seconds to load<br>
+                    <br>
+                    Issue data for individual weeks looks <i>completely</i> off? Blame the Github API :)<br>
+                </p>
+            </div>
+            <canvas id="canvas" width="1600" height="800"> </canvas>
+            <div id="selected-container">
+                <h2> Selected Issues </h2>
+                <div id="selected">
+                    None
+                </div>
+            </div>
+        </div>
         <script>
-            const RENDER_X_MULT = 8;
-            const RENDER_Y_MULT = 2;
 
             const START_DATE = Date.now();
 
-            // One week
-            let INTERVAL = 7 * 24 * 60 * 60 * 1000;
+            let inputElement = document.getElementById("interval-input");
+
+            let INTERVAL = inputElement.value * 24 * 60 * 60 * 1000;
+            let RENDER_X_MULT = inputElement.value;
+            let RENDER_X_OFFS = 0;
+            let RENDER_Y_MULT = parseFloat(localStorage.issueScrollRenderYMult) ?? 0.3;
+
+            let SELECTED_COLUMN = -1;
 
             function findIssues(data, key, lowerBoundDate, upperBoundDate) {
                 let results = [];
@@ -30,7 +82,7 @@
                 let results = [];
 
                 let currentDate = START_DATE;
-                for (let i = 0; i < 200; i ++) {
+                for (let i = 0; i < 340; i ++) {
                     let lowerBoundDate = currentDate - INTERVAL;
                     let upperBoundDate = currentDate;
 
@@ -48,29 +100,36 @@
                 return results;
             }
 
-            function rerender(ctx, data, highlightedColumn, selectX, selectY) {
+            function rerender(ctx, usedYMult, data, highlightedColumn, selectX, selectY) {
                 let canvas = ctx.canvas;
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+                ctx.translate(RENDER_X_OFFS, 0);
+
                 ctx.fillStyle = "#000";
-                ctx.fillRect(0, canvas.height / 2 - 1, canvas.width, 2);
+                ctx.fillRect(0, canvas.height / 2 - 1, canvas.width * 2, 2);
                 for (let i = data.length - 1; i >= 0; i --) {
                     ctx.fillStyle = "#f0f";
-                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 + 1, RENDER_X_MULT, Math.round(data[i].closed * RENDER_Y_MULT));
+                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 + 1, RENDER_X_MULT, Math.round(data[i].closed * usedYMult));
                     ctx.fillStyle = "#0c0";
-                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - Math.round(data[i].created * RENDER_Y_MULT), RENDER_X_MULT, Math.round(data[i].created * RENDER_Y_MULT));
+                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - Math.round(data[i].created * usedYMult), RENDER_X_MULT, Math.round(data[i].created * usedYMult));
                 }
 
                 for (let i = data.length - 1; i >= 0; i --) {
-                    if (i == highlightedColumn) {
+                    if (i === highlightedColumn) {
                         ctx.strokeStyle = "#222";
                         ctx.lineWidth = 2;
-                        ctx.strokeRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - data[i].created * RENDER_Y_MULT, RENDER_X_MULT - 1, (data[i].closed + data[i].created) * RENDER_Y_MULT + 1);
+                        ctx.strokeRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - data[i].created * usedYMult, RENDER_X_MULT - 1, (data[i].closed + data[i].created) * usedYMult + 1);
 
                         let text = "From " + new Date(START_DATE - INTERVAL * (i + 1)).toDateString() + " to " + new Date(START_DATE - INTERVAL * i).toDateString() + " : " + data[i].created + " created, " + data[i].closed + " closed";
                         let measure = ctx.measureText(text);
                         let width = measure.width + 4;
                         let height = measure.emHeightAscent + measure.emHeightDescent + 2;
+
+                        // Swap if it'd go offscreen
+                        if (selectX + width + 12 + RENDER_X_OFFS > canvas.width) {
+                            ctx.translate(-width, 0);
+                        }
 
                         ctx.fillStyle = "#000";
                         ctx.fillRect(selectX, selectY, width + 2, height + 2);
@@ -80,8 +139,19 @@
                         ctx.fillStyle = "#000";
                         ctx.font = "14px sans-serif";
                         ctx.fillText(text, selectX + 2, selectY + height - 2);
+
+                        // Reset transform
+                        if (selectX + width + 12 + RENDER_X_OFFS > canvas.width) {
+                            ctx.translate(width, 0);
+                        }
+                    } else if (i === SELECTED_COLUMN) {
+                        ctx.strokeStyle = "#F00";
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - data[i].created * usedYMult, RENDER_X_MULT - 1, (data[i].closed + data[i].created) * usedYMult + 1);
                     }
                 }
+
+                ctx.resetTransform();
             }
 
             async function main() {
@@ -92,13 +162,107 @@
 
                 ctx.font = "120px sans-serif";
 
+                let usedYMult = RENDER_Y_MULT;
+
                 results = determineResults(allIssues);
-                rerender(ctx, results, -1, -1, -1);
+                rerender(ctx, usedYMult, results, -1, -1, -1);
+
+                function formatDate(date) {
+                    return date.getFullYear() + "-" + (date.getMonth() + 1).toString().padStart(2, "0") + "-" + date.getDate().toString().padStart(2, "0");
+                }
+
+                function getColumn(e) {
+                    let clientRect = canvas.getBoundingClientRect();
+                    let offsetX = (e.clientX - clientRect.left) * (canvas.width / clientRect.width) - RENDER_X_OFFS;
+                    let offsetY = (e.clientY - clientRect.top) * (canvas.height / clientRect.height);
+                    return { column: Math.floor(offsetX / RENDER_X_MULT), offsetX, offsetY };
+                }
+
+                let selected = document.getElementById("selected");
+
+                let isDragging = false;
+                let lastMousePressX = NaN;
+                let lastMousePressY = NaN;
 
                 canvas.addEventListener("mousemove", function(e) {
-                    let column = Math.floor(e.offsetX / RENDER_X_MULT);
+                    let { column, offsetX, offsetY } = getColumn(e);
 
-                    rerender(ctx, results, column, e.offsetX + 7, e.offsetY + 14);
+                    rerender(ctx, usedYMult, results, column, offsetX + 7, offsetY + 14);
+
+                    if (isDragging) {
+                        RENDER_X_OFFS += e.movementX;
+                    }
+                });
+
+                canvas.addEventListener("mousedown", function(e) {
+                    isDragging = true;
+
+                    let { offsetX, offsetY } = getColumn(e);
+
+                    lastMousePressX = offsetX;
+                    lastMousePressY = offsetY;
+                });
+
+                canvas.addEventListener("mouseup", function(e) {
+                    isDragging = false;
+
+                    let { column, offsetX, offsetY } = getColumn(e);
+
+                    if ((lastMousePressX - offsetX) ** 2 + (lastMousePressY - offsetY) ** 2 < 20) {
+                        if (SELECTED_COLUMN === column) {
+                            // Reset selection
+                            SELECTED_COLUMN = -1;
+
+                            selected.innerHTML = "None";
+
+                            rerender(ctx, usedYMult, results, column, offsetX + 7, offsetY + 14);
+                        } else {
+                            SELECTED_COLUMN = column;
+                            
+                            let startDate = new Date(START_DATE - INTERVAL * (column + 1));
+                            let endDate = new Date(START_DATE - INTERVAL * column);
+                            let string = startDate.toDateString() + " to " + endDate.toDateString();
+                            let createdInfo = "<a href=\"https://github.com/ruffle-rs/ruffle/issues?q=is%3Aissue%20created%3A%3E" + formatDate(startDate) + "%20created%3A%3C%3D" + formatDate(endDate) + "\">Issues <b>opened</b> from " + string;
+                            let closedInfo = "<a href=\"https://github.com/ruffle-rs/ruffle/issues?q=is%3Aissue%20closed%3A%3E" + formatDate(startDate) + "%20closed%3A%3C%3D" + formatDate(endDate) + "\">Issues <b>closed</b> from " + string;
+                            selected.innerHTML = createdInfo + "<br>" + closedInfo;
+
+                            rerender(ctx, usedYMult, results, column, offsetX + 7, offsetY + 14);
+                        }
+                    }
+                });
+
+                canvas.addEventListener("mouseout", function(e) {
+                    rerender(ctx, usedYMult, results, -1, -1, -1);
+                });
+
+                canvas.addEventListener("wheel", function(e) {
+                    if (e.deltaY < 0) {
+                        usedYMult += 0.04;
+                    } else {
+                        usedYMult -= 0.04;
+                    }
+                    if (usedYMult < 0.1) {
+                        usedYMult = 0.1;
+                    }
+                    
+                    localStorage.issueScrollRenderYMult = usedYMult;
+
+                    rerender(ctx, usedYMult, results, -1, -1, -1);
+                });
+
+                inputElement.addEventListener("change", function(e) {
+                    // Reset selection
+                    SELECTED_COLUMN = -1;
+
+                    selected.innerHTML = "None";
+
+                    let value = inputElement.value;
+
+                    INTERVAL = value * 24 * 60 * 60 * 1000;
+                    RENDER_X_MULT = value;
+
+                    results = determineResults(allIssues);
+                    rerender(ctx, usedYMult, results, -1, -1, -1);
                 });
             }
 
