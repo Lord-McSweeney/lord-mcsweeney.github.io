@@ -1,0 +1,108 @@
+<!DOCTYPE HTML>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body style="margin: 0px;">
+        <canvas id="canvas" width="1600" height="800" style="margin: 8px; border: 1px solid black;"> </canvas>
+        <script>
+            const RENDER_X_MULT = 8;
+            const RENDER_Y_MULT = 2;
+
+            const START_DATE = Date.now();
+
+            // One week
+            let INTERVAL = 7 * 24 * 60 * 60 * 1000;
+
+            function findIssues(data, key, lowerBoundDate, upperBoundDate) {
+                let results = [];
+                for (let i in data) {
+                    let issue = data[i];
+                    let time = issue[key];
+                    if (time >= lowerBoundDate && time < upperBoundDate) {
+                        results.push(issue);
+                    }
+                }
+                return results;
+            }
+
+            function determineResults(data) {
+                let results = [];
+
+                let currentDate = START_DATE;
+                for (let i = 0; i < 200; i ++) {
+                    let lowerBoundDate = currentDate - INTERVAL;
+                    let upperBoundDate = currentDate;
+
+                    let issuesCreated = findIssues(data, "created_at", lowerBoundDate, upperBoundDate);
+                    let issuesClosed = findIssues(data, "closed_at", lowerBoundDate, upperBoundDate);
+
+                    results.push({
+                        created: issuesCreated.length,
+                        closed: issuesClosed.length,
+                    });
+
+                    currentDate = lowerBoundDate;
+                }
+
+                return results;
+            }
+
+            function rerender(ctx, data, highlightedColumn, selectX, selectY) {
+                let canvas = ctx.canvas;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = "#000";
+                ctx.fillRect(0, canvas.height / 2 - 1, canvas.width, 2);
+                for (let i = data.length - 1; i >= 0; i --) {
+                    ctx.fillStyle = "#f0f";
+                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 + 1, RENDER_X_MULT, Math.round(data[i].closed * RENDER_Y_MULT));
+                    ctx.fillStyle = "#0c0";
+                    ctx.fillRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - Math.round(data[i].created * RENDER_Y_MULT), RENDER_X_MULT, Math.round(data[i].created * RENDER_Y_MULT));
+                }
+
+                for (let i = data.length - 1; i >= 0; i --) {
+                    if (i == highlightedColumn) {
+                        ctx.strokeStyle = "#222";
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(i * RENDER_X_MULT, canvas.height / 2 - 1 - data[i].created * RENDER_Y_MULT, RENDER_X_MULT - 1, (data[i].closed + data[i].created) * RENDER_Y_MULT + 1);
+
+                        let text = "From " + new Date(START_DATE - INTERVAL * (i + 1)).toDateString() + " to " + new Date(START_DATE - INTERVAL * i).toDateString() + " : " + data[i].created + " created, " + data[i].closed + " closed";
+                        let measure = ctx.measureText(text);
+                        let width = measure.width + 4;
+                        let height = measure.emHeightAscent + measure.emHeightDescent + 2;
+
+                        ctx.fillStyle = "#000";
+                        ctx.fillRect(selectX, selectY, width + 2, height + 2);
+                        ctx.fillStyle = "#ccc";
+                        ctx.fillRect(selectX + 1, selectY + 1, width, height);
+
+                        ctx.fillStyle = "#000";
+                        ctx.font = "14px sans-serif";
+                        ctx.fillText(text, selectX + 2, selectY + height - 2);
+                    }
+                }
+            }
+
+            async function main() {
+                let allIssues = await (await fetch("data.json")).json();
+                const canvas = document.getElementById("canvas");
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+
+                ctx.font = "120px sans-serif";
+
+                results = determineResults(allIssues);
+                rerender(ctx, results, -1, -1, -1);
+
+                canvas.addEventListener("mousemove", function(e) {
+                    let column = Math.floor(e.offsetX / RENDER_X_MULT);
+
+                    rerender(ctx, results, column, e.offsetX + 7, e.offsetY + 14);
+                });
+            }
+
+            main();
+        </script>
+    </body>
+</html>
